@@ -1,0 +1,51 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build the map
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Only deploy a map rebuilt from a clean pipeline: the sanity queries
+      # must return zero rows before anything is published.
+      - name: Build base and run the sanity gate
+        run: |
+          python scripts/build_db.py
+          res=$(sqlite3 db/iphone_vs_samsung.sqlite < sql/02_sanity_checks.sql)
+          test -z "$res"
+          python scripts/mapa_mty.py
+      - name: Stage the map as the site root
+        run: |
+          mkdir -p site
+          cp insights/mapa_mty.html site/index.html
+      - name: Upload the pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

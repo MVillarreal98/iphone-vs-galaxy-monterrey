@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Base de datos SQLite generada (se reconstruye desde los CSV raw)
+db/*.sqlite
+*.db
+
+# Entorno
+.env
+
+# Sistema
+Thumbs.db
+.DS_Store
+
+# Salida de corridas locales
+output/
+
+# Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+

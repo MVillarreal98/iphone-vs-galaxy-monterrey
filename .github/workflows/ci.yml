@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pipeline:
+    name: build, sanity checks, map, match tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The pipeline is stdlib-only: pytest is the only tool installed, for
+      # the unit tests of the Trends match precedence.
+      - name: Unit tests of the match rules
+        run: |
+          python -m pip install --quiet pytest
+          python -m pytest -q -p no:cacheprovider
+      # The pipeline itself is the smoke check: the base builds from the
+      # committed raw files, the sanity queries must return zero rows, and
+      # the map must generate.
+      - name: Build base, sanity checks and map must run clean
+        run: |
+          python scripts/build_db.py
+          test -f db/iphone_vs_samsung.sqlite
+          res=$(sqlite3 db/iphone_vs_samsung.sqlite < sql/02_sanity_checks.sql)
+          test -z "$res"
+          python scripts/mapa_mty.py
+          test -s insights/mapa_mty.html
+      - name: Upload the map artifact for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: mapa_mty
+          path: insights/mapa_mty.html
+          if-no-files-found: error

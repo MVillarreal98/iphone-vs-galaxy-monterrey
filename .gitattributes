@@ -1,0 +1,7 @@
+# Text files are LF in the repository and in the working tree.
+* text=auto eol=lf
+*.pdf  binary
+*.zip  binary
+
+# Keep Windows shell artifacts with CRLF where they must run there.
+*.ps1  text eol=crlf
