@@ -171,6 +171,11 @@ window.addEventListener("error", function (e) {
 });
 </script>
 <script>
+/* Todo el script vive dentro de un IIFE: no declara nada en el scope
+global, así que variables de extensiones (p. ej. una `r` global que
+declara el bloqueo de anuncios) no pueden chocar con `const` y matar el
+mapa entero en Firefox. */
+(() => {
 const DATA = /*__DATA__*/null;
 
 const dark = matchMedia("(prefers-color-scheme: dark)").matches;
@@ -354,6 +359,7 @@ document.getElementById("tabla").innerHTML =
 
 document.getElementById("fuentes").textContent = "Fuentes: " +
   DATA.fuentes.map(f => `${f.file_name} (captura ${f.retrieved_at})`).join(" · ");
+})();
 </script>
 </body>
 </html>
