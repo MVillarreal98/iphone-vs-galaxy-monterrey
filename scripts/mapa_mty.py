@@ -4,12 +4,17 @@ con el % de búsquedas de iPhone vs Samsung Galaxy por localidad.
 Uso (después de scripts/build_db.py):
     python scripts/mapa_mty.py
 
-Sólo librería estándar: el HTML usa Leaflet desde CDN y lleva los datos
-embebidos, así que se abre con doble clic y se puede publicar tal cual.
+Sólo librería estándar: el HTML lleva Leaflet 1.9.4 embebido (sin CDN,
+que algunas redes bloquean y deja el mapa en negro) y los datos
+embebidos; se abre con doble clic y se puede publicar tal cual.
 """
 import json
 import sqlite3
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _leaflet_embed import embed  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / "db" / "iphone_vs_samsung.sqlite"
@@ -48,11 +53,17 @@ def load_data(con):
 def main():
     con = sqlite3.connect(DB)
     data = load_data(con)
-    html = TEMPLATE.replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False))
+    leaflet_css, leaflet_js = embed()
+    html = (
+        TEMPLATE
+        .replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False))
+        .replace("__LEAFLET_CSS__", leaflet_css)
+        .replace("__LEAFLET_JS__", leaflet_js)
+    )
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(html, encoding="utf-8")
     print(f"Mapa generado: {OUT.relative_to(ROOT)} "
-          f"({len(data['localidades'])} localidades)")
+          f"({len(data['localidades'])} localidades, Leaflet embebido)")
 
 
 TEMPLATE = r"""<!doctype html>
@@ -61,11 +72,10 @@ TEMPLATE = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>iPhone vs Galaxy en Monterrey</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <style>
+  /* Leaflet 1.9.4 embebido (antes venía del CDN de unpkg, que algunas redes
+  corporativas bloquean y dejaba el mapa en negro). */
+__LEAFLET_CSS__
   :root {
     --surface: #fcfcfb; --panel: #ffffff; --ink: #1d1d1b; --ink-2: #55554f;
     --muted: #85857e; --line: #e4e3df; --accent: #2a78d6; --mid: #f0efec;
@@ -140,6 +150,26 @@ TEMPLATE = r"""<!doctype html>
   </details>
   <p class="note" id="fuentes"></p>
 </main>
+<!-- Leaflet 1.9.4 embebido: el HTML es autocontenido, sin dependencia del
+CDN (unpkg) que algunos navegadores/redes bloquean. -->
+<script>
+__LEAFLET_JS__
+</script>
+<!-- Fallback visible: si el script del mapa muere (navegador viejo,
+bloqueo de contenido, CDN bloqueado), el usuario ve un mensaje en vez de
+un rectángulo negro. -->
+<script>
+window.addEventListener("error", function (e) {
+  var el = document.getElementById("map");
+  if (el && !el.dataset.ok) {
+    el.textContent = "El mapa no carg\u00f3: " + (e.message || "error desconocido")
+      + ". Actualiza el navegador, recarga con Ctrl+F5 o desactiva el "
+      + "bloqueo de contenido para esta p\u00e1gina.";
+    el.style.cssText += ";display:flex;align-items:center;justify-content:center;"
+      + "padding:20px;text-align:center;color:#eee;background:#232322;";
+  }
+});
+</script>
 <script>
 const DATA = /*__DATA__*/null;
 
@@ -163,7 +193,7 @@ const locs = DATA.localidades;
 const shares = locs.flatMap(l => [l.s2020, l.s2025]).filter(v => v != null);
 // Mismo dominio para 2020 y 2025: el color de un valor no cambia de año a año
 const lo = Math.floor(Math.min(...shares)), hi = Math.ceil(Math.max(...shares));
-const dMax = Math.max(1, ...locs.map(l => Math.abs(l.delta ?? 0)));
+const dMax = Math.max(1, ...locs.map(l => Math.abs(l.delta == null ? 0 : l.delta)));
 const pobMax = Math.max(...locs.map(l => l.pob || 0));
 const radius = p => 6 + 22 * Math.sqrt((p || 0) / pobMax);
 
@@ -189,6 +219,17 @@ document.getElementById("stats").innerHTML = statsHtml.map(([t, v, s]) =>
 
 // --- mapa ---
 const map = L.map("map", { scrollWheelZoom: false }).setView([25.69, -100.31], 11);
+// Si las teselas de Esri no cargan (red corporativa), avisar en lugar de
+// dejar el contenedor en negro sin explicación.
+let tileErrors = 0;
+map.on("tileerror", () => {
+  if (++tileErrors === 4) {
+    document.getElementById("note").textContent =
+      "Las imágenes del mapa no cargan en esta red (bloqueo del navegador o "
+      + "del firewall). Prueba el modo Gris, otro navegador o desactiva el "
+      + "bloqueo de contenido para esta página.";
+  }
+});
 // Mapa base: satélite (Esri World Imagery) o gris (Esri Canvas), ninguno requiere API key
 const canvas = dark ? "World_Dark_Gray_Base" : "World_Light_Gray_Base";
 const grayTiles = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/"
@@ -258,7 +299,7 @@ function tooltip(l) {
     row("2025", l.s2025 == null ? "sin dato"
       : `iPhone <b>${fmt(l.s2025)}%</b> · Galaxy <b>${fmt(100 - l.s2025)}%</b>`) +
     (l.delta == null ? "" : row("Cambio", (l.delta >= 0 ? "+" : "") + fmt(l.delta) + " pp")) +
-    row("Población", (l.pob ?? 0).toLocaleString("es-MX")) +
+    row("Población", (l.pob == null ? 0 : l.pob).toLocaleString("es-MX")) +
     row("Viviendas con internet", fmt(l.internet) + "%") + "</div>";
 }
 
@@ -298,16 +339,18 @@ draw("2025");
 
 // Base satelital por defecto (necesita `layer`, ya declarado arriba)
 setBase("sat");
+document.getElementById("map").dataset.ok = "1";
 
 // --- tabla ---
-const rows = [...locs].sort((a, b) => (b.delta ?? -1e9) - (a.delta ?? -1e9));
+const rows = [...locs].sort((a, b) =>
+  (b.delta == null ? -1e9 : b.delta) - (a.delta == null ? -1e9 : a.delta));
 document.getElementById("tabla").innerHTML =
   `<thead><tr><th>Localidad</th><th>Municipio</th><th class="n">iPhone 2020</th>` +
   `<th class="n">iPhone 2025</th><th class="n">Cambio (pp)</th><th class="n">Población</th></tr></thead><tbody>` +
   rows.map(l => `<tr><td>${l.nom_loc}</td><td>${l.nom_mun}</td>` +
     `<td class="n">${fmt(l.s2020)}</td><td class="n">${fmt(l.s2025)}</td>` +
     `<td class="n">${l.delta == null ? "—" : (l.delta >= 0 ? "+" : "") + fmt(l.delta)}</td>` +
-    `<td class="n">${(l.pob ?? 0).toLocaleString("es-MX")}</td></tr>`).join("") + "</tbody>";
+    `<td class="n">${(l.pob == null ? 0 : l.pob).toLocaleString("es-MX")}</td></tr>`).join("") + "</tbody>";
 
 document.getElementById("fuentes").textContent = "Fuentes: " +
   DATA.fuentes.map(f => `${f.file_name} (captura ${f.retrieved_at})`).join(" · ");
